@@ -2,6 +2,10 @@
 import express from "express";
 import cors from "cors";
 import projectRoutes from "./routes/projectRoutes";
+import apiKeyRoutes from "./routes/apiKeyRoutes";
+import runRoutes from "./routes/runRoutes";
+
+import { apiKeyAuth } from "./middleware/apiKeyAuth";
 
 const app = express();
 
@@ -15,6 +19,16 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.get("/api/test-auth", apiKeyAuth, (_req, res) => {
+  res.json({
+    success: true,
+    message: "API key verified successfully",
+    projectId: res.locals.projectId,
+  });
+});
+
 app.use("/api/projects", projectRoutes);
+app.use("/api/projects", apiKeyRoutes);
+app.use("/api/projects", runRoutes);
 
 export default app;
