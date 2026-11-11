@@ -1,0 +1,135 @@
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Project {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+
+  apiKeys     ApiKey[]
+  runs        Run[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  keyPrefix String
+  keyHash   String    @unique
+
+  projectId String    @db.Uuid
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  revokedAt DateTime?
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Run {
+  id           String      @id @default(uuid()) @db.Uuid
+  name         String
+  status       RunStatus   @default(RUNNING)
+
+  projectId    String      @db.Uuid
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  nextSequence BigInt      @default(1)
+
+  metrics      MetricEvent[]
+  batches      IngestionBatch[]
+  outboxEvents OutboxEvent[]
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([id, projectId])
+  @@index([projectId, createdAt])
+}
+
+model MetricEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  eventId        String
+  clientId       String
+
+  projectId      String   @db.Uuid
+  runId          String   @db.Uuid
+
+  run            Run      @relation(fields: [runId, projectId], references: [id, projectId], onDelete: Cascade)
+
+  clientSequence BigInt
+  runSequence    BigInt
+
+  name           String
+  value          Float
+  step           Int?
+
+  occurredAt     DateTime
+  receivedAt     DateTime @default(now())
+
+  metadata       Json?
+
+  @@unique([runId, eventId])
+  @@unique([runId, clientId, clientSequence])
+  @@unique([runId, runSequence])
+  @@index([projectId, runId, runSequence])
+}
+
+model IngestionBatch {
+  id            String   @id @default(uuid()) @db.Uuid
+  batchId       String
+  clientId      String
+
+  projectId     String   @db.Uuid
+  runId         String   @db.Uuid
+
+  run           Run      @relation(fields: [runId, projectId], references: [id, projectId], onDelete: Cascade)
+
+  payloadHash   String
+  acceptedCount Int      @default(0)
+  response      Json?
+
+  createdAt     DateTime @default(now())
+
+  @@unique([runId, clientId, batchId])
+}
+
+model OutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+
+  projectId     String    @db.Uuid
+  runId         String    @db.Uuid
+
+  run           Run       @relation(fields: [runId, projectId], references: [id, projectId], onDelete: Cascade)
+
+  runSequence   BigInt
+  payload       Json
+
+  attempts      Int       @default(0)
+  publishedAt   DateTime?
+  nextAttemptAt DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@unique([runId, runSequence])
+  @@index([publishedAt, nextAttemptAt])
+}
