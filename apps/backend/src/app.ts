@@ -4,6 +4,7 @@ import cors from "cors";
 import projectRoutes from "./routes/projectRoutes";
 import apiKeyRoutes from "./routes/apiKeyRoutes";
 import runRoutes from "./routes/runRoutes";
+import metricRoutes from "./routes/metricRoutes";
 
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 
@@ -30,5 +31,6 @@ app.get("/api/test-auth", apiKeyAuth, (_req, res) => {
 app.use("/api/projects", projectRoutes);
 app.use("/api/projects", apiKeyRoutes);
 app.use("/api/projects", runRoutes);
+app.use("/api", metricRoutes);
 
 export default app;
