@@ -2,7 +2,7 @@
   "name": "@repo/backend",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "main": "index.js",
   "scripts": {
     "dev": "npm run build && npm run start",

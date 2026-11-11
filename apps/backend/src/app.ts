@@ -1,7 +1,7 @@
 
-import { prismaClient } from "@repo/db/client";
 import express from "express";
 import cors from "cors";
+import projectRoutes from "./routes/projectRoutes";
 
 const app = express();
 
@@ -15,22 +15,6 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.get("/projects", async (_req, res) => {
-  try {
-    const projects = await prismaClient.project.findMany();
-
-    res.json({
-      success: true,
-      data: projects,
-    });
-  } catch (error) {
-    console.error("Failed to fetch projects:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch projects",
-    });
-  }
-});
+app.use("/api/projects", projectRoutes);
 
 export default app;
