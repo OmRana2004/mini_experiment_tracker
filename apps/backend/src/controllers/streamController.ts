@@ -116,7 +116,7 @@ export const streamRunEvents: RequestHandler = async (req, res) => {
       }
     };
 
-    // Send existing missed events immediately.
+    // Send existing missed events immediately
     await sendEvents();
 
     // Check for new events every second.
