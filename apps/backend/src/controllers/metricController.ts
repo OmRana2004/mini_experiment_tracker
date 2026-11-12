@@ -230,8 +230,8 @@ export const ingestMetrics: RequestHandler = async (req, res) => {
         };
       },
       {
-        isolationLevel: "Serializable",
-      }
+  isolationLevel: "ReadCommitted",
+}
     )
 );
 
@@ -274,7 +274,7 @@ export const ingestMetrics: RequestHandler = async (req, res) => {
 
 async function runWithRetry<T>(
   operation: () => Promise<T>,
-  maxRetries = 8
+  maxRetries = 10
 ): Promise<T> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -290,10 +290,14 @@ async function runWithRetry<T>(
         throw error;
       }
 
-      const delay = Math.min(100 * 2 ** (attempt - 1), 2000);
-      const jitter = Math.floor(Math.random() * 100);
+      const delay = Math.min(100 * 2 ** (attempt - 1), 3000);
+      const jitter = Math.floor(Math.random() * 200);
 
-      await new Promise(resolve =>
+      console.warn(
+        `Transaction conflict. Retry ${attempt}/${maxRetries} in ${delay + jitter}ms`
+      );
+
+      await new Promise((resolve) =>
         setTimeout(resolve, delay + jitter)
       );
     }

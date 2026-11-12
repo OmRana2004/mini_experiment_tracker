@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "../../../../../lib/axios";
 import MetricsList from "../../../../../components/runs/MetricsList";
+import MetricSimulator from "../../../../../components/runs/MetricSimulator";
 
 interface Run {
   id: string;
@@ -111,8 +112,15 @@ export default function RunDetailsPage() {
         </button>
       </section>
 
-      {/* Metrics */}
-      <MetricsList runId={runId} />
+    <MetricSimulator
+  projectId={projectId}
+  runId={runId}
+/>
+
+<MetricsList
+  projectId={projectId}
+  runId={runId}
+/>
     </main>
   );
 }
