@@ -6,14 +6,24 @@ const API_BASE_URL =
 
 const PROJECT_ID = process.env.PROJECT_ID;
 const API_KEY = process.env.API_KEY;
-const DURATION_SECONDS = Number(process.env.DURATION_SECONDS || 60);
 
+const DURATION_SECONDS = Number(process.env.DURATION_SECONDS || 60);
 const CONCURRENT_RUNS = 50;
 const EVENTS_PER_SECOND = 10;
 const INTERVAL_MS = 1000;
 
+const REQUEST_TIMEOUT_MS = 30000;
+
 if (!PROJECT_ID || !API_KEY) {
   console.error("Missing PROJECT_ID or API_KEY environment variable.");
+  process.exit(1);
+}
+
+if (
+  !Number.isInteger(DURATION_SECONDS) ||
+  DURATION_SECONDS <= 0
+) {
+  console.error("DURATION_SECONDS must be a positive integer.");
   process.exit(1);
 }
 
@@ -41,7 +51,7 @@ async function request(path, options = {}) {
       ...headers,
       ...options.headers,
     },
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   const body = await response.json().catch(() => ({}));
@@ -55,6 +65,7 @@ async function request(path, options = {}) {
   return body;
 }
 
+// Create 50 experiment runs.
 async function createRuns() {
   console.log(`Creating ${CONCURRENT_RUNS} runs...`);
 
@@ -75,9 +86,11 @@ async function createRuns() {
   );
 
   console.log(`Created ${runs.length} runs successfully.`);
+
   return runs;
 }
 
+// Generate 10 metric events for every batch.
 function createEvents(runIndex, sequence) {
   return Array.from({ length: EVENTS_PER_SECOND }, (_, index) => ({
     eventId: randomUUID(),
@@ -92,22 +105,23 @@ function createEvents(runIndex, sequence) {
   }));
 }
 
-async function testRun(run, runIndex, endAt) {
+// Send metric batches on a fixed schedule.
+async function testRun(run, runIndex, startAt) {
   const clientId = `load-client-${run.id}`;
+
   let sequence = 1;
-  let nextTick = Date.now();
-
   let acceptedForRun = 0;
-  let sentBatches = 0;
+  let successfulBatches = 0;
 
-  while (Date.now() < endAt) {
-    const wait = nextTick - Date.now();
+  const pendingRequests = [];
+
+  for (let tick = 0; tick < DURATION_SECONDS; tick++) {
+    const scheduledAt = startAt + tick * INTERVAL_MS;
+    const wait = scheduledAt - Date.now();
 
     if (wait > 0) {
       await sleep(wait);
     }
-
-    if (Date.now() >= endAt) break;
 
     const events = createEvents(runIndex, sequence);
 
@@ -117,53 +131,72 @@ async function testRun(run, runIndex, endAt) {
       events,
     };
 
-    const startedAt = Date.now();
-
-    try {
-      const response = await request(`/runs/${run.id}/metrics`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      const latency = Date.now() - startedAt;
-      const result = response.data;
-
-      results.requests++;
-      results.latencies.push(latency);
-      results.acceptedEvents += result.acceptedCount || 0;
-      results.duplicateEvents += result.duplicateCount || 0;
-
-      acceptedForRun += result.acceptedCount || 0;
-      sentBatches++;
-    } catch (error) {
-      results.requests++;
-      results.failedRequests++;
-      results.errors.push({
-        runId: run.id,
-        message: error.message,
-      });
-    }
-
     sequence += EVENTS_PER_SECOND;
-    nextTick += INTERVAL_MS;
+
+    // Count every attempted request.
+    results.requests++;
+
+    // Start request without waiting for the response.
+    const pending = (async () => {
+      const startedAt = Date.now();
+
+      try {
+        const response = await request(
+          `/runs/${run.id}/metrics`,
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          }
+        );
+
+        const latency = Date.now() - startedAt;
+        const result = response.data;
+
+        results.latencies.push(latency);
+
+        const accepted = result.acceptedCount || 0;
+        const duplicates = result.duplicateCount || 0;
+
+        results.acceptedEvents += accepted;
+        results.duplicateEvents += duplicates;
+
+        acceptedForRun += accepted;
+        successfulBatches++;
+      } catch (error) {
+        results.failedRequests++;
+
+        results.errors.push({
+          runId: run.id,
+          message: error.message,
+        });
+      }
+    })();
+
+    pendingRequests.push(pending);
   }
+
+  // Wait until all requests for this run finish.
+  await Promise.all(pendingRequests);
 
   return {
     runId: run.id,
-    sentBatches,
+    sentBatches: successfulBatches,
     acceptedEvents: acceptedForRun,
   };
 }
 
+// Calculate latency percentile.
 function percentile(values, percent) {
   if (!values.length) return 0;
 
   const sorted = [...values].sort((a, b) => a - b);
+
   const index = Math.ceil((percent / 100) * sorted.length) - 1;
 
   return sorted[Math.max(0, index)];
 }
 
+// Verify stored metric counts using the GET API.
 async function verifyDatabase(runResults) {
   console.log("\nVerifying metrics through the API...");
 
@@ -176,7 +209,20 @@ async function verifyDatabase(runResults) {
         `/runs/${result.runId}/metrics`
       );
 
-      const databaseCount = response.data.length;
+      const databaseCount = Array.isArray(response.data)
+        ? response.data.length
+        : -1;
+
+      if (databaseCount < 0) {
+        mismatches++;
+
+        console.error(
+          `Unexpected response for run ${result.runId}`
+        );
+
+        continue;
+      }
+
       totalDatabaseEvents += databaseCount;
 
       if (databaseCount !== result.acceptedEvents) {
@@ -188,74 +234,146 @@ async function verifyDatabase(runResults) {
       }
     } catch (error) {
       mismatches++;
-      console.error(`Verification failed for ${result.runId}:`, error.message);
+
+      console.error(
+        `Verification failed for ${result.runId}:`,
+        error.message
+      );
     }
   }
 
-  return { totalDatabaseEvents, mismatches };
+  return {
+    totalDatabaseEvents,
+    mismatches,
+  };
 }
 
+// Main load test.
 async function main() {
-  console.log("\nStarting experiment tracker load test");
+  console.log("\nStarting Experiment Tracker Load Test");
   console.log("--------------------------------------");
+
   console.log(`Concurrent runs: ${CONCURRENT_RUNS}`);
   console.log(`Events per run/sec: ${EVENTS_PER_SECOND}`);
-  console.log(`Target events/sec: ${CONCURRENT_RUNS * EVENTS_PER_SECOND}`);
+  console.log(
+    `Target events/sec: ${CONCURRENT_RUNS * EVENTS_PER_SECOND}`
+  );
   console.log(`Duration: ${DURATION_SECONDS} seconds`);
 
   const runs = await createRuns();
 
-  const startAt = Date.now() + 2000;
+  const startAt = Date.now() + 3000;
   const endAt = startAt + DURATION_SECONDS * 1000;
 
-  console.log("\nLoad test started...\n");
+  console.log("\nLoad test starting in 3 seconds...\n");
 
   await sleep(Math.max(0, startAt - Date.now()));
 
   const runResults = await Promise.all(
     runs.map((run, index) =>
-      testRun(run, index, endAt)
+      testRun(run, index, startAt)
     )
   );
 
+  // Wait until the scheduled test window ends.
+  await sleep(Math.max(0, endAt - Date.now()));
+
+  const actualEndAt = Date.now();
+
+  console.log("\nLoad test finished.");
+
   const verification = await verifyDatabase(runResults);
 
-  const actualDuration =
-    DURATION_SECONDS;
+  const actualDurationSeconds =
+    (actualEndAt - startAt) / 1000;
 
   const p50 = percentile(results.latencies, 50);
   const p95 = percentile(results.latencies, 95);
   const p99 = percentile(results.latencies, 99);
 
+  const targetEvents =
+    CONCURRENT_RUNS *
+    EVENTS_PER_SECOND *
+    DURATION_SECONDS;
+
+  const actualThroughput =
+    results.acceptedEvents / actualDurationSeconds;
+
   console.log("\n========== LOAD TEST RESULTS ==========");
+
   console.log(`Runs: ${runs.length}`);
-  console.log(`Duration: ${actualDuration}s`);
-  console.log(`Successful requests: ${results.requests - results.failedRequests}`);
+  console.log(
+    `Duration: ${actualDurationSeconds.toFixed(2)} seconds`
+  );
+
+  console.log(`Target events: ${targetEvents}`);
+  console.log(`Attempted requests: ${results.requests}`);
+
+  console.log(
+    `Successful requests: ${
+      results.requests - results.failedRequests
+    }`
+  );
+
   console.log(`Failed requests: ${results.failedRequests}`);
   console.log(`Accepted events: ${results.acceptedEvents}`);
   console.log(`Duplicate events: ${results.duplicateEvents}`);
+
   console.log(
-    `Actual throughput: ${(results.acceptedEvents / actualDuration).toFixed(2)} events/sec`
+    `Actual throughput: ${actualThroughput.toFixed(2)} events/sec`
   );
+
   console.log(`API latency p50: ${p50}ms`);
   console.log(`API latency p95: ${p95}ms`);
   console.log(`API latency p99: ${p99}ms`);
-  console.log(`Database/API total metrics: ${verification.totalDatabaseEvents}`);
-  console.log(`Run count mismatches: ${verification.mismatches}`);
-  console.log("=======================================\n");
-
-  if (results.errors.length) {
-    console.log("First 10 errors:");
-    console.log(results.errors.slice(0, 10));
-  }
 
   console.log(
-    results.failedRequests === 0 &&
+    `Database/API total metrics: ${verification.totalDatabaseEvents}`
+  );
+
+  console.log(`Run count mismatches: ${verification.mismatches}`);
+
+  console.log("=======================================\n");
+
+  if (results.errors.length > 0) {
+    console.log("First 10 errors:");
+
+    console.log(
+      JSON.stringify(results.errors.slice(0, 10), null, 2)
+    );
+  }
+
+  const allBatchesSent =
+    results.requests === CONCURRENT_RUNS * DURATION_SECONDS;
+
+  const allEventsAccepted =
+    results.acceptedEvents === targetEvents;
+
+  const noFailures =
+    results.failedRequests === 0;
+
+  const countsMatch =
     verification.mismatches === 0 &&
-    verification.totalDatabaseEvents === results.acceptedEvents
+    verification.totalDatabaseEvents === results.acceptedEvents;
+
+  const passed =
+    allBatchesSent &&
+    allEventsAccepted &&
+    noFailures &&
+    countsMatch;
+
+  console.log(
+    passed
       ? "RESULT: LOAD TEST PASSED"
       : "RESULT: LOAD TEST NEEDS INVESTIGATION"
   );
+
+  console.log("\nAdditional checks:");
+
+  console.log(`All batches scheduled: ${allBatchesSent}`);
+  console.log(`All target events accepted: ${allEventsAccepted}`);
+  console.log(`No failed requests: ${noFailures}`);
+  console.log(`Database counts match API: ${countsMatch}`);
 }
 
 main().catch((error) => {

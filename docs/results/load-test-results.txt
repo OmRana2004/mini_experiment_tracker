@@ -1,0 +1,41 @@
+
+Starting Experiment Tracker Load Test
+--------------------------------------
+Concurrent runs: 50
+Events per run/sec: 10
+Target events/sec: 500
+Duration: 60 seconds
+Creating 50 runs...
+Created 50 runs successfully.
+
+Load test starting in 3 seconds...
+
+
+Load test finished.
+
+Verifying metrics through the API...
+
+========== LOAD TEST RESULTS ==========
+Runs: 50
+Duration: 60.00 seconds
+Target events: 30000
+Attempted requests: 3000
+Successful requests: 3000
+Failed requests: 0
+Accepted events: 30000
+Duplicate events: 0
+Actual throughput: 499.99 events/sec
+API latency p50: 233ms
+API latency p95: 503ms
+API latency p99: 1170ms
+Database/API total metrics: 30000
+Run count mismatches: 0
+=======================================
+
+RESULT: LOAD TEST PASSED
+
+Additional checks:
+All batches scheduled: true
+All target events accepted: true
+No failed requests: true
+Database counts match API: true
