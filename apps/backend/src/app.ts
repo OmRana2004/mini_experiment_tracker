@@ -5,6 +5,7 @@ import projectRoutes from "./routes/projectRoutes";
 import apiKeyRoutes from "./routes/apiKeyRoutes";
 import runRoutes from "./routes/runRoutes";
 import metricRoutes from "./routes/metricRoutes";
+import streamRoutes from "./routes/streamRoutes";
 
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 
@@ -32,5 +33,6 @@ app.use("/api/projects", projectRoutes);
 app.use("/api/projects", apiKeyRoutes);
 app.use("/api/projects", runRoutes);
 app.use("/api", metricRoutes);
+app.use("/api", streamRoutes);
 
 export default app;
