@@ -1,10 +1,15 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "../../../lib/axios";
+
+import CreateRun from "../../../components/runs/CreateRun";
+import RunsList from "../../../components/runs/RunsList";
+import ApiKeyManager from "../../../components/api-keys/ApiKeyManager";
+import ApiKeySetup from "../../../components/api-keys/ApiKeySetup";
 
 interface Project {
   id: string;
@@ -22,7 +27,10 @@ export default function ProjectDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchProject = async () => {
+  const [apiKey, setApiKey] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const fetchProject = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -35,13 +43,35 @@ export default function ProjectDetailsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  // Load project-specific API key
+  useEffect(() => {
+    const savedKey = localStorage.getItem(`apiKey:${projectId}`);
+
+    setApiKey(savedKey || "");
+    setSaved(!!savedKey);
+  }, [projectId]);
 
   useEffect(() => {
     if (projectId) {
       fetchProject();
     }
-  }, [projectId]);
+  }, [projectId, fetchProject]);
+
+  const handleSaveApiKey = () => {
+    if (!apiKey.trim()) return;
+
+    localStorage.setItem(`apiKey:${projectId}`, apiKey.trim());
+    setApiKey(apiKey.trim());
+    setSaved(true);
+  };
+
+  const handleRemoveApiKey = () => {
+    localStorage.removeItem(`apiKey:${projectId}`);
+    setApiKey("");
+    setSaved(false);
+  };
 
   if (loading) {
     return <main className="p-6">Loading project...</main>;
@@ -67,6 +97,7 @@ export default function ProjectDetailsPage() {
         ← Back to Projects
       </Link>
 
+      {/* Project Details */}
       <section className="space-y-3 rounded-md border p-5">
         <h1 className="text-2xl font-semibold">{project.name}</h1>
 
@@ -81,6 +112,30 @@ export default function ProjectDetailsPage() {
           </p>
         </div>
       </section>
+
+      {/* API Key Generator and List */}
+      <ApiKeyManager projectId={projectId} />
+
+      {/* Save Project API Key */}
+      <ApiKeySetup
+        apiKey={apiKey}
+        saved={saved}
+        onChange={(value) => {
+          setApiKey(value);
+          setSaved(false);
+        }}
+        onSave={handleSaveApiKey}
+        onRemove={handleRemoveApiKey}
+      />
+
+      {/* Create Run */}
+      <CreateRun
+        projectId={projectId}
+        onSuccess={() => window.location.reload()}
+      />
+
+      {/* Runs List */}
+      <RunsList projectId={projectId} />
     </main>
   );
 }

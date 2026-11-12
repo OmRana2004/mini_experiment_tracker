@@ -301,3 +301,65 @@ async function runWithRetry<T>(
 
   throw new Error("Transaction retry limit exceeded");
 }
+
+
+export const getRunMetrics: RequestHandler = async (req, res) => {
+  try {
+    const runId = req.params.runId;
+    const projectId = res.locals.projectId;
+
+    if (typeof runId !== "string" || !runId.trim()) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid run ID",
+      });
+      return;
+    }
+
+    // Verify that the run belongs to the authenticated project
+    const run = await prismaClient.run.findFirst({
+      where: {
+        id: runId,
+        projectId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!run) {
+      res.status(404).json({
+        success: false,
+        message: "Run not found",
+      });
+      return;
+    }
+
+    // Fetch metrics in run sequence order
+    const metrics = await prismaClient.metricEvent.findMany({
+      where: {
+        runId,
+        projectId,
+      },
+      orderBy: {
+        runSequence: "asc",
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: metrics.map((metric) => ({
+        ...metric,
+        clientSequence: metric.clientSequence.toString(),
+        runSequence: metric.runSequence.toString(),
+      })),
+    });
+  } catch (error) {
+    console.error("Fetch metrics error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch metrics",
+    });
+  }
+};
