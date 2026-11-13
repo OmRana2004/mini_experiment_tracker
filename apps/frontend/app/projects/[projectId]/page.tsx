@@ -11,6 +11,17 @@ import RunsList from "../../../components/runs/RunsList";
 import ApiKeyManager from "../../../components/api-keys/ApiKeyManager";
 import ApiKeySetup from "../../../components/api-keys/ApiKeySetup";
 
+import {
+  ArrowLeft,
+  FolderKanban,
+  CalendarDays,
+  KeyRound,
+  FlaskConical,
+  Activity,
+  RefreshCw,
+  AlertCircle,
+} from "lucide-react";
+
 interface Project {
   id: string;
   name: string;
@@ -60,10 +71,12 @@ export default function ProjectDetailsPage() {
   }, [projectId, fetchProject]);
 
   const handleSaveApiKey = () => {
-    if (!apiKey.trim()) return;
+    const trimmedKey = apiKey.trim();
 
-    localStorage.setItem(`apiKey:${projectId}`, apiKey.trim());
-    setApiKey(apiKey.trim());
+    if (!trimmedKey) return;
+
+    localStorage.setItem(`apiKey:${projectId}`, trimmedKey);
+    setApiKey(trimmedKey);
     setSaved(true);
   };
 
@@ -73,69 +86,191 @@ export default function ProjectDetailsPage() {
     setSaved(false);
   };
 
+  const formatDate = (date: string) =>
+    new Date(date).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+
+  // Loading
   if (loading) {
-    return <main className="p-6">Loading project...</main>;
+    return (
+      <main className="min-h-screen bg-slate-50 px-4 py-10">
+        <div className="mx-auto flex max-w-5xl items-center justify-center gap-2 text-sm text-slate-500">
+          <RefreshCw size={16} className="animate-spin text-violet-600" />
+          Loading project...
+        </div>
+      </main>
+    );
   }
 
+  // Error
   if (error || !project) {
     return (
-      <main className="space-y-4 p-6">
-        <p className="text-red-600">
-          {error || "Project not found"}
-        </p>
+      <main className="min-h-screen bg-slate-50 px-4 py-10">
+        <div className="mx-auto max-w-5xl space-y-4">
+          <div className="flex items-center gap-2 text-sm text-red-600">
+            <AlertCircle size={17} />
+            {error || "Project not found"}
+          </div>
 
-        <Link href="/" className="underline">
-          Back to Projects
-        </Link>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 text-sm font-medium text-violet-600 hover:text-violet-700"
+          >
+            <ArrowLeft size={15} />
+            Back to Projects
+          </Link>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 p-6">
-      <Link href="/" className="text-sm text-blue-600 hover:underline">
-        ← Back to Projects
-      </Link>
+    <main className="min-h-screen bg-[#f8f9fc] text-slate-900">
+      <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
 
-      {/* Project Details */}
-      <section className="space-y-3 rounded-md border p-5">
-        <h1 className="text-2xl font-semibold">{project.name}</h1>
+        {/* Back Navigation */}
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition-colors hover:text-violet-600"
+        >
+          <ArrowLeft size={16} />
+          All Projects
+        </Link>
 
-        <p className="text-gray-600">
-          {project.description || "No description"}
-        </p>
+        {/* Project Header */}
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                <FolderKanban size={19} />
+              </div>
 
-        <div className="space-y-1 text-sm text-gray-500">
-          <p>Project ID: {project.id}</p>
-          <p>
-            Created: {new Date(project.createdAt).toLocaleDateString()}
+              <div className="min-w-0">
+                <span className="text-xs font-medium text-violet-600">
+                  PROJECT WORKSPACE
+                </span>
+
+                <h1 className="mt-1 wrap-break-word text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+                  {project.name}
+                </h1>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  {project.description || "No description provided"}
+                </p>
+              </div>
+            </div>
+
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+              <Activity size={13} />
+              Active Project
+            </span>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays size={13} />
+              Created {formatDate(project.createdAt)}
+            </span>
+
+            <span className="inline-flex min-w-0 items-center gap-1.5">
+              <FolderKanban size={13} />
+              <span className="truncate">ID: {project.id}</span>
+            </span>
+          </div>
+        </section>
+
+        {/* API Key Management */}
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-3 sm:px-5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+              <KeyRound size={16} />
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                API Key Management
+              </h2>
+              <p className="text-xs text-slate-500">
+                Generate and manage project credentials.
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-5">
+            <ApiKeyManager projectId={projectId} />
+          </div>
+        </section>
+
+        {/* Project API Key Setup */}
+        <section className="rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 sm:p-5">
+          <div className="mb-4 flex items-center gap-2.5 border-b border-slate-100 pb-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+              <KeyRound size={16} />
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Workspace Authentication
+              </h2>
+              <p className="text-xs text-slate-500">
+                Save the API key used by this browser.
+              </p>
+            </div>
+          </div>
+
+          <ApiKeySetup
+            apiKey={apiKey}
+            saved={saved}
+            onChange={(value) => {
+              setApiKey(value);
+              setSaved(false);
+            }}
+            onSave={handleSaveApiKey}
+            onRemove={handleRemoveApiKey}
+          />
+        </section>
+
+        {/* Create Run */}
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-3 sm:px-5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+              <FlaskConical size={16} />
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                New Experiment Run
+              </h2>
+              <p className="text-xs text-slate-500">
+                Start tracking a new model experiment.
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-5">
+            <CreateRun
+              projectId={projectId}
+              onSuccess={fetchProject}
+            />
+          </div>
+        </section>
+
+        {/* Runs */}
+        <section className="rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 sm:p-5">
+          <RunsList projectId={projectId} />
+        </section>
+
+        {/* Footer */}
+        <footer className="border-t border-slate-200 pt-4 text-center">
+          <p className="text-xs text-slate-400">
+            Experiment Tracker · Project Workspace
           </p>
-        </div>
-      </section>
+        </footer>
 
-      {/* API Key Generator and List */}
-      <ApiKeyManager projectId={projectId} />
-
-      {/* Save Project API Key */}
-      <ApiKeySetup
-        apiKey={apiKey}
-        saved={saved}
-        onChange={(value) => {
-          setApiKey(value);
-          setSaved(false);
-        }}
-        onSave={handleSaveApiKey}
-        onRemove={handleRemoveApiKey}
-      />
-
-      {/* Create Run */}
-      <CreateRun
-        projectId={projectId}
-        onSuccess={() => window.location.reload()}
-      />
-
-      {/* Runs List */}
-      <RunsList projectId={projectId} />
+      </div>
     </main>
   );
 }

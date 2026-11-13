@@ -2,6 +2,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  Wifi,
+  WifiOff,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
 
 interface Metric {
   id: string;
@@ -41,22 +48,30 @@ export default function MetricsList({
 
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, ms);
+        const timer = setTimeout(() => {
+          signal.removeEventListener("abort", handleAbort);
+          resolve();
+        }, ms);
 
-        signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          { once: true }
-        );
+        const handleAbort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+
+        signal.addEventListener("abort", handleAbort, { once: true });
       });
 
     const start = async () => {
       try {
         setLoading(true);
         setError("");
+        setConnectionStatus("connecting");
+        setMetrics([]);
+        lastSequenceRef.current = "0";
+
+        if (!API_URL) {
+          throw new Error("API URL is not configured.");
+        }
 
         const apiKey = localStorage.getItem(`apiKey:${projectId}`);
 
@@ -64,7 +79,7 @@ export default function MetricsList({
           throw new Error("Please save an API key for this project.");
         }
 
-        // 1. Fetch existing metrics
+        // Fetch existing metrics
         const response = await fetch(
           `${API_URL}/runs/${runId}/metrics`,
           {
@@ -83,6 +98,7 @@ export default function MetricsList({
 
         setMetrics(data);
 
+        // Find latest sequence
         const lastMetric = data.reduce<Metric | null>(
           (latest, metric) =>
             !latest ||
@@ -93,16 +109,17 @@ export default function MetricsList({
         );
 
         lastSequenceRef.current = lastMetric?.runSequence || "0";
-
         setLoading(false);
 
-        // 2. Connect to SSE and recover missed events
+        // Connect to SSE
         let retryDelay = 1000;
 
         while (!signal.aborted) {
           try {
             setConnectionStatus(
-              lastSequenceRef.current === "0" ? "connecting" : "reconnecting"
+              lastSequenceRef.current === "0"
+                ? "connecting"
+                : "reconnecting"
             );
 
             const streamResponse = await fetch(
@@ -127,7 +144,6 @@ export default function MetricsList({
 
             const reader = streamResponse.body.getReader();
             const decoder = new TextDecoder();
-
             let buffer = "";
 
             while (!signal.aborted) {
@@ -145,7 +161,7 @@ export default function MetricsList({
 
                 let eventId = "";
                 let eventType = "";
-                let eventData = "";
+                const eventData: string[] = [];
 
                 for (const line of block.split(/\r?\n/)) {
                   if (line.startsWith("id:")) {
@@ -153,32 +169,41 @@ export default function MetricsList({
                   } else if (line.startsWith("event:")) {
                     eventType = line.slice(6).trim();
                   } else if (line.startsWith("data:")) {
-                    eventData += line.slice(5).trim();
+                    eventData.push(line.slice(5).trim());
                   }
                 }
 
-                if (eventType !== "metric" || !eventData) continue;
+                if (eventType !== "metric" || eventData.length === 0) {
+                  continue;
+                }
 
-                const payload = JSON.parse(eventData);
+                let payload;
+
+                try {
+                  payload = JSON.parse(eventData.join("\n"));
+                } catch {
+                  console.error("Invalid SSE metric payload:", eventData);
+                  continue;
+                }
 
                 const rawMetric = (payload.metric || payload) as Metric;
 
-const metric: Metric = {
-  ...rawMetric,
-  id: rawMetric.id || rawMetric.eventId,
-};
+                const metric: Metric = {
+                  ...rawMetric,
+                  id: rawMetric.id || rawMetric.eventId,
+                };
 
-                // Use SSE ID as the authoritative sequence if needed.
+                // SSE ID is the authoritative run sequence
                 const sequence = eventId || metric.runSequence;
 
-                if (!sequence || !/^\d+$/.test(sequence)) continue;
+                if (!sequence || !/^\d+$/.test(sequence)) {
+                  continue;
+                }
 
                 metric.runSequence = sequence;
 
-                // Ignore duplicate or older events.
-                if (
-                  BigInt(sequence) <= BigInt(lastSequenceRef.current)
-                ) {
+                // Ignore older or duplicate sequences
+                if (BigInt(sequence) <= BigInt(lastSequenceRef.current)) {
                   continue;
                 }
 
@@ -186,22 +211,21 @@ const metric: Metric = {
 
                 setMetrics((previous) => {
                   if (
-  previous.some(
-    (item) =>
-      item.id === metric.id ||
-      item.eventId === metric.eventId
-  )
-) {
-  return previous;
-}
+                    previous.some(
+                      (item) =>
+                        item.id === metric.id ||
+                        item.eventId === metric.eventId
+                    )
+                  ) {
+                    return previous;
+                  }
 
-                  return [...previous, metric].sort((a, b) =>
-                    BigInt(a.runSequence) < BigInt(b.runSequence)
-                      ? -1
-                      : BigInt(a.runSequence) > BigInt(b.runSequence)
-                        ? 1
-                        : 0
-                  );
+                  return [...previous, metric].sort((a, b) => {
+                    const seqA = BigInt(a.runSequence);
+                    const seqB = BigInt(b.runSequence);
+
+                    return seqA < seqB ? -1 : seqA > seqB ? 1 : 0;
+                  });
                 });
               }
             }
@@ -217,18 +241,19 @@ const metric: Metric = {
             setConnectionStatus("reconnecting");
 
             await sleep(retryDelay);
-
             retryDelay = Math.min(retryDelay * 2, 10000);
           }
         }
       } catch (err) {
         if (!signal.aborted) {
           console.error("Metrics error:", err);
+
           setError(
             err instanceof Error
               ? err.message
               : "Failed to load metrics"
           );
+
           setLoading(false);
         }
       }
@@ -241,73 +266,280 @@ const metric: Metric = {
     };
   }, [projectId, runId]);
 
-  
-return (
-  <section className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="text-lg font-semibold">
-        Metrics ({metrics.length})
-      </h2>
+  // Overview calculations
+  const metricTypes = [...new Set(metrics.map((metric) => metric.name))];
 
-      <span className="text-xs font-medium text-gray-500">
-        {connectionStatus === "live"
-          ? "Live connected"
-          : connectionStatus === "reconnecting"
-            ? "Reconnecting..."
-            : "Connecting..."}
-      </span>
-    </div>
+  const latestSequence = metrics.reduce(
+    (latest, metric) =>
+      BigInt(metric.runSequence) > BigInt(latest)
+        ? metric.runSequence
+        : latest,
+    "0"
+  );
 
-    {loading && (
-      <p className="text-sm text-gray-500">Loading metrics...</p>
-    )}
+  // Find latest event for each metric type
+  const latestMetrics = metricTypes
+    .map((name) =>
+      metrics
+        .filter((metric) => metric.name === name)
+        .reduce<Metric | null>(
+          (latest, metric) =>
+            !latest ||
+            BigInt(metric.runSequence) > BigInt(latest.runSequence)
+              ? metric
+              : latest,
+          null
+        )
+    )
+    .filter((metric): metric is Metric => metric !== null);
 
-    {error && (
-      <p className="text-sm text-red-600">{error}</p>
-    )}
+  const formatDate = (date: string) => {
+    const parsed = new Date(date);
 
-    {!loading && !error && metrics.length === 0 && (
-      <p className="text-sm text-gray-500">
-        No metrics found. Waiting for new events...
-      </p>
-    )}
+    if (Number.isNaN(parsed.getTime())) return "Invalid date";
 
-    {metrics.length > 0 && (
-      <div className="overflow-x-auto rounded-md border">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b bg-gray-50">
-            <tr>
-              <th className="p-3">Sequence</th>
-              <th className="p-3">Event ID</th>
-              <th className="p-3">Metric</th>
-              <th className="p-3">Value</th>
-              <th className="p-3">Step</th>
-              <th className="p-3">Occurred At</th>
-            </tr>
-          </thead>
+    return parsed.toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
-          <tbody>
-            {metrics.map((metric) => (
-              <tr
-                key={metric.id || metric.eventId}
-                className="border-b last:border-0"
-              >
-                <td className="p-3">{metric.runSequence}</td>
-                <td className="p-3 text-gray-500">
-                  {metric.eventId}
-                </td>
-                <td className="p-3 font-medium">{metric.name}</td>
-                <td className="p-3">{metric.value}</td>
-                <td className="p-3">{metric.step ?? "-"}</td>
-                <td className="p-3 whitespace-nowrap">
-                  {new Date(metric.occurredAt).toLocaleString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+  const getMetricStyle = (name: string) => {
+    const normalized = name.toLowerCase();
+
+    if (normalized.includes("accuracy")) {
+      return "text-emerald-700";
+    }
+
+    if (normalized.includes("loss")) {
+      return "text-rose-700";
+    }
+
+    return "text-slate-700";
+  };
+
+  return (
+    <section className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Live Metrics
+          </h2>
+          <p className="text-sm text-slate-500">
+            Real-time experiment events
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1.5 text-xs font-medium">
+          {connectionStatus === "live" ? (
+            <Wifi size={14} className="text-emerald-600" />
+          ) : connectionStatus === "reconnecting" ? (
+            <WifiOff size={14} className="text-amber-600" />
+          ) : (
+            <Loader2 size={14} className="animate-spin text-slate-500" />
+          )}
+
+          <span
+            className={
+              connectionStatus === "live"
+                ? "text-emerald-700"
+                : connectionStatus === "reconnecting"
+                  ? "text-amber-700"
+                  : "text-slate-500"
+            }
+          >
+            {connectionStatus === "live"
+              ? "Live"
+              : connectionStatus === "reconnecting"
+                ? "Reconnecting"
+                : "Connecting"}
+          </span>
+        </div>
       </div>
-    )}
-  </section>
-);
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 size={15} className="animate-spin" />
+          Fetching historical metrics...
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+        >
+          <AlertCircle size={16} className="shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Compact Overview */}
+      <div className="grid grid-cols-3 divide-x divide-slate-200 rounded-lg border border-slate-200 bg-white py-3">
+        <div className="px-3">
+          <p className="text-xs text-slate-500">Events</p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {metrics.length}
+          </p>
+        </div>
+
+        <div className="px-3">
+          <p className="text-xs text-slate-500">Metric Types</p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {metricTypes.length}
+          </p>
+        </div>
+
+        <div className="min-w-0 px-3">
+          <p className="text-xs text-slate-500">Latest Sequence</p>
+          <p className="mt-1 truncate font-mono text-lg font-semibold text-slate-900">
+            {latestSequence}
+          </p>
+        </div>
+      </div>
+
+      {/* Latest Metric Values */}
+      {latestMetrics.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-800">
+            Latest Values
+          </h3>
+
+          <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+            {latestMetrics.map((metric) => (
+              <div
+                key={metric.name}
+                className="flex items-center justify-between gap-3 px-3 py-2.5"
+              >
+                <div>
+                  <p className="text-sm font-medium text-slate-800">
+                    {metric.name}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Step {metric.step ?? "-"} · #{metric.runSequence}
+                  </p>
+                </div>
+
+                <span
+                  className={`font-mono text-sm font-semibold ${getMetricStyle(
+                    metric.name
+                  )}`}
+                >
+                  {metric.value}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Event History */}
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">
+            Event History
+          </h3>
+
+          <span className="text-xs text-slate-500">
+            {metrics.length} events
+          </span>
+        </div>
+
+        {metrics.length === 0 && !loading && !error ? (
+          <div className="rounded-lg border border-dashed border-slate-300 px-4 py-8 text-center">
+            <Activity size={20} className="mx-auto text-slate-400" />
+            <p className="mt-2 text-sm font-medium text-slate-700">
+              No metrics yet
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Send metrics using the simulator.
+            </p>
+          </div>
+        ) : metrics.length > 0 ? (
+          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            {/* Desktop Table */}
+            <div className="hidden md:block">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2.5 font-medium">Sequence</th>
+                    <th className="px-3 py-2.5 font-medium">Metric</th>
+                    <th className="px-3 py-2.5 font-medium">Value</th>
+                    <th className="px-3 py-2.5 font-medium">Step</th>
+                    <th className="px-3 py-2.5 font-medium">Occurred At</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {metrics.map((metric) => (
+                    <tr
+                      key={metric.id || metric.eventId}
+                      className="hover:bg-slate-50"
+                    >
+                      <td className="px-3 py-2.5 font-mono text-slate-600">
+                        #{metric.runSequence}
+                      </td>
+                      <td className="px-3 py-2.5 font-medium text-slate-800">
+                        {metric.name}
+                      </td>
+                      <td
+                        className={`px-3 py-2.5 font-mono font-semibold ${getMetricStyle(
+                          metric.name
+                        )}`}
+                      >
+                        {metric.value}
+                      </td>
+                      <td className="px-3 py-2.5 text-slate-600">
+                        {metric.step ?? "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-500">
+                        {formatDate(metric.occurredAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile List */}
+            <div className="divide-y divide-slate-100 md:hidden">
+              {metrics.map((metric) => (
+                <div
+                  key={metric.id || metric.eventId}
+                  className="flex items-center justify-between gap-3 px-3 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-800">
+                      {metric.name}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      #{metric.runSequence} · Step {metric.step ?? "-"}
+                    </p>
+                  </div>
+
+                  <span
+                    className={`shrink-0 font-mono text-sm font-semibold ${getMetricStyle(
+                      metric.name
+                    )}`}
+                  >
+                    {metric.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex items-center gap-1.5 text-xs text-slate-400">
+        <Activity size={13} />
+        Automatically updating through SSE
+      </div>
+    </section>
+  );
 }

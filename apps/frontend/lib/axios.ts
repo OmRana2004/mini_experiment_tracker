@@ -9,27 +9,39 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
+  if (typeof window === "undefined") {
+    return config;
+  }
+
   const url = config.url || "";
 
-  // Check whether request belongs to a project
-  const projectMatch = url.match(/\/projects\/([^/?#]+)/);
+  // Find project ID from URLs like:
+  // /projects/:projectId
+  // /projects/:projectId/runs
+  const projectMatch = url.match(
+    /\/projects\/([^/?#]+)/
+  );
 
-  let apiKey: string | null = null;
+  // Explicit project ID takes priority.
+  const explicitProjectId = config.headers["X-Project-Id"] as
+    | string
+    | undefined;
 
-  if (projectMatch) {
-    const projectId = projectMatch[1];
+  const projectId = explicitProjectId || projectMatch?.[1];
 
-    // Use only this project's API key
-    apiKey = localStorage.getItem(`apiKey:${projectId}`);
-  } else {
-    // Use dashboard key for non-project-specific requests
-    apiKey = localStorage.getItem("apiKey");
-  }
+  const apiKey = projectId
+    ? localStorage.getItem(`apiKey:${projectId}`)
+    : localStorage.getItem("apiKey");
 
   if (apiKey) {
     config.headers.Authorization = `Bearer ${apiKey}`;
   } else {
     delete config.headers.Authorization;
+  }
+
+  // Remove internal header before sending request.
+  if (explicitProjectId) {
+    delete config.headers["X-Project-Id"];
   }
 
   return config;
