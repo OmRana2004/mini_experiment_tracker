@@ -58,7 +58,9 @@ export default function MetricsList({
           resolve();
         };
 
-        signal.addEventListener("abort", handleAbort, { once: true });
+        signal.addEventListener("abort", handleAbort, {
+          once: true,
+        });
       });
 
     const start = async () => {
@@ -79,7 +81,7 @@ export default function MetricsList({
           throw new Error("Please save an API key for this project.");
         }
 
-        // Fetch existing metrics
+        // Fetch historical metrics
         const response = await fetch(
           `${API_URL}/runs/${runId}/metrics`,
           {
@@ -96,10 +98,17 @@ export default function MetricsList({
 
         const data: Metric[] = (await response.json()).data;
 
-        setMetrics(data);
+        const sortedMetrics = [...data].sort((a, b) => {
+          const seqA = BigInt(a.runSequence);
+          const seqB = BigInt(b.runSequence);
+
+          return seqA < seqB ? -1 : seqA > seqB ? 1 : 0;
+        });
+
+        setMetrics(sortedMetrics);
 
         // Find latest sequence
-        const lastMetric = data.reduce<Metric | null>(
+        const lastMetric = sortedMetrics.reduce<Metric | null>(
           (latest, metric) =>
             !latest ||
             BigInt(metric.runSequence) > BigInt(latest.runSequence)
@@ -144,6 +153,7 @@ export default function MetricsList({
 
             const reader = streamResponse.body.getReader();
             const decoder = new TextDecoder();
+
             let buffer = "";
 
             while (!signal.aborted) {
@@ -277,7 +287,7 @@ export default function MetricsList({
     "0"
   );
 
-  // Find latest event for each metric type
+  // Latest event for each metric type
   const latestMetrics = metricTypes
     .map((name) =>
       metrics
@@ -323,12 +333,12 @@ export default function MetricsList({
   return (
     <section className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">
+          <h2 className="text-base font-semibold text-slate-900">
             Live Metrics
           </h2>
-          <p className="text-sm text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500">
             Real-time experiment events
           </p>
         </div>
@@ -339,7 +349,10 @@ export default function MetricsList({
           ) : connectionStatus === "reconnecting" ? (
             <WifiOff size={14} className="text-amber-600" />
           ) : (
-            <Loader2 size={14} className="animate-spin text-slate-500" />
+            <Loader2
+              size={14}
+              className="animate-spin text-slate-500"
+            />
           )}
 
           <span
@@ -379,16 +392,16 @@ export default function MetricsList({
         </div>
       )}
 
-      {/* Compact Overview */}
+      {/* Overview */}
       <div className="grid grid-cols-3 divide-x divide-slate-200 rounded-lg border border-slate-200 bg-white py-3">
-        <div className="px-3">
+        <div className="min-w-0 px-3">
           <p className="text-xs text-slate-500">Events</p>
           <p className="mt-1 text-lg font-semibold text-slate-900">
             {metrics.length}
           </p>
         </div>
 
-        <div className="px-3">
+        <div className="min-w-0 px-3">
           <p className="text-xs text-slate-500">Metric Types</p>
           <p className="mt-1 text-lg font-semibold text-slate-900">
             {metricTypes.length}
@@ -396,14 +409,16 @@ export default function MetricsList({
         </div>
 
         <div className="min-w-0 px-3">
-          <p className="text-xs text-slate-500">Latest Sequence</p>
+          <p className="truncate text-xs text-slate-500">
+            Latest Sequence
+          </p>
           <p className="mt-1 truncate font-mono text-lg font-semibold text-slate-900">
             {latestSequence}
           </p>
         </div>
       </div>
 
-      {/* Latest Metric Values */}
+      {/* Latest Values */}
       {latestMetrics.length > 0 && (
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-800">
@@ -414,10 +429,10 @@ export default function MetricsList({
             {latestMetrics.map((metric) => (
               <div
                 key={metric.name}
-                className="flex items-center justify-between gap-3 px-3 py-2.5"
+                className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-slate-50"
               >
-                <div>
-                  <p className="text-sm font-medium text-slate-800">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-800">
                     {metric.name}
                   </p>
                   <p className="text-xs text-slate-400">
@@ -426,7 +441,7 @@ export default function MetricsList({
                 </div>
 
                 <span
-                  className={`font-mono text-sm font-semibold ${getMetricStyle(
+                  className={`shrink-0 font-mono text-sm font-semibold ${getMetricStyle(
                     metric.name
                   )}`}
                 >
@@ -440,7 +455,7 @@ export default function MetricsList({
 
       {/* Event History */}
       <div>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-slate-800">
             Event History
           </h3>
@@ -452,7 +467,10 @@ export default function MetricsList({
 
         {metrics.length === 0 && !loading && !error ? (
           <div className="rounded-lg border border-dashed border-slate-300 px-4 py-8 text-center">
-            <Activity size={20} className="mx-auto text-slate-400" />
+            <Activity
+              size={20}
+              className="mx-auto text-slate-400"
+            />
             <p className="mt-2 text-sm font-medium text-slate-700">
               No metrics yet
             </p>
@@ -462,72 +480,50 @@ export default function MetricsList({
           </div>
         ) : metrics.length > 0 ? (
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-            {/* Desktop Table */}
-            <div className="hidden md:block">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
-                  <tr>
-                    <th className="px-3 py-2.5 font-medium">Sequence</th>
-                    <th className="px-3 py-2.5 font-medium">Metric</th>
-                    <th className="px-3 py-2.5 font-medium">Value</th>
-                    <th className="px-3 py-2.5 font-medium">Step</th>
-                    <th className="px-3 py-2.5 font-medium">Occurred At</th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  {metrics.map((metric) => (
-                    <tr
-                      key={metric.id || metric.eventId}
-                      className="hover:bg-slate-50"
-                    >
-                      <td className="px-3 py-2.5 font-mono text-slate-600">
-                        #{metric.runSequence}
-                      </td>
-                      <td className="px-3 py-2.5 font-medium text-slate-800">
-                        {metric.name}
-                      </td>
-                      <td
-                        className={`px-3 py-2.5 font-mono font-semibold ${getMetricStyle(
-                          metric.name
-                        )}`}
-                      >
-                        {metric.value}
-                      </td>
-                      <td className="px-3 py-2.5 text-slate-600">
-                        {metric.step ?? "-"}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-500">
-                        {formatDate(metric.occurredAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* Table Header - Desktop */}
+            <div className="hidden grid-cols-[1fr_1fr_0.8fr_0.6fr_1.3fr] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-500 sm:grid">
+              <span>Sequence</span>
+              <span>Metric</span>
+              <span>Value</span>
+              <span>Step</span>
+              <span>Occurred At</span>
             </div>
 
-            {/* Mobile List */}
-            <div className="divide-y divide-slate-100 md:hidden">
+            {/* Single responsive event list */}
+            <div className="divide-y divide-slate-100">
               {metrics.map((metric) => (
                 <div
                   key={metric.id || metric.eventId}
-                  className="flex items-center justify-between gap-3 px-3 py-2.5"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-3 transition-colors hover:bg-slate-50 sm:grid-cols-[1fr_1fr_0.8fr_0.6fr_1.3fr] sm:items-center sm:gap-3 sm:py-2.5"
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-800">
-                      {metric.name}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      #{metric.runSequence} · Step {metric.step ?? "-"}
-                    </p>
-                  </div>
+                  {/* Sequence */}
+                  <span className="font-mono text-xs text-slate-500 sm:text-sm">
+                    #{metric.runSequence}
+                  </span>
 
+                  {/* Metric */}
+                  <span className="min-w-0 truncate text-sm font-medium text-slate-800">
+                    {metric.name}
+                  </span>
+
+                  {/* Value */}
                   <span
-                    className={`shrink-0 font-mono text-sm font-semibold ${getMetricStyle(
+                    className={`row-start-1 col-start-2 text-right font-mono text-sm font-semibold sm:row-auto sm:col-auto sm:text-left ${getMetricStyle(
                       metric.name
                     )}`}
                   >
                     {metric.value}
+                  </span>
+
+                  {/* Step */}
+                  <span className="text-xs text-slate-500 sm:text-sm">
+                    <span className="sm:hidden">Step </span>
+                    {metric.step ?? "-"}
+                  </span>
+
+                  {/* Date */}
+                  <span className="col-span-2 text-xs text-slate-400 sm:col-span-1 sm:whitespace-nowrap sm:text-slate-500">
+                    {formatDate(metric.occurredAt)}
                   </span>
                 </div>
               ))}
@@ -536,6 +532,7 @@ export default function MetricsList({
         ) : null}
       </div>
 
+      {/* SSE Status */}
       <div className="flex items-center gap-1.5 text-xs text-slate-400">
         <Activity size={13} />
         Automatically updating through SSE
